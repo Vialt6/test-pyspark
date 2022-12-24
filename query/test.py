@@ -1,5 +1,7 @@
+import re
+from nltk.corpus import stopwords
 from bs4 import BeautifulSoup
-from pyspark.sql.functions import to_timestamp, col, lit, desc
+from pyspark.sql.functions import to_timestamp, col, lit, desc, udf
 import panel as pn
 import matplotlib.pyplot as plt
 import pyspark
@@ -7,6 +9,10 @@ import seaborn as sns
 import numpy as np
 # Import SparkSession
 from pyspark.sql import SparkSession
+from pyspark.sql.types import StringType
+
+#import nltk
+#nltk.download('stopwords')
 
 # Create SparkSession
 spark = SparkSession.builder \
@@ -32,25 +38,43 @@ film.sort(desc("count")).show()
 filter_df = df.filter((df.sentiment == "positive") | (df.sentiment == "negative"))
 filter_df.show()
 
+
 #cleaning reviews
 def html_parser(text):
-    soup = BeautifulSoup(text, "html_parser")
+    soup = BeautifulSoup(text, "html.parser")
+    return soup.get_text()
+
+html_parser_udf = udf(lambda x : html_parser(x), StringType())
+
+def remove_square_brackets(text):
+    return re.sub('\[[^]]*\]', '', text)
+
+remove_square_brackets_udf = udf(lambda x : remove_square_brackets(x), StringType())
+
+def remove_url(text):
+    return re.sub(r'http\S+', '', text)
+
+remove_url_udf = udf(lambda x : remove_url(x), StringType())
 
 
+stopwords = set(stopwords.words("english"))
+def remove_stopwords(text):
+    final_text = []
+    for i in text.split():
+        if i.strip().lower() not in stopwords and i.strip().lower().isalpha():
+            final_text.append(i.strip().lower())
+    return " ".join(final_text)
+remove_stopwords_udf = udf(lambda x : remove_stopwords(x), StringType())
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+def clean_text(text):
+    text = html_parser_udf(text)
+    text = remove_square_brackets_udf(text)
+    text = remove_url_udf(text)
+    text = remove_stopwords_udf(text)
+    return text
+clean_text_udf = udf(lambda x : clean_text(x), StringType())
+clean_df = filter_df.select(clean_text_udf(col("review")), col("sentiment"))
+clean_df.show()
 
 
 pdf1 = filter_df.toPandas()
